@@ -18,7 +18,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 $script:AppName = "ImFuckingParanoid"
-$script:Version = "1.0.0"
+$script:Version = "1.0.1"
 $script:ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $PSCommandPath }
 $script:LogRoot = Join-Path -Path $script:ScriptRoot -ChildPath "logs"
 $script:RunStartedAt = Get-Date
@@ -30,7 +30,7 @@ $script:BackupHosts = "$env:SystemDrive\hosts_backup_$(Get-Date -Format 'yyyyMMd
 $script:FirewallTag = "ImFuckingParanoid"
 $script:HostsPath = "$env:windir\System32\drivers\etc\hosts"
 $script:HostsBackedUp = $false
-$script:CriticalProcessNames = @("Idle", "System", "Registry", "smss", "csrss", "wininit", "services", "lsass", "winlogon", "fontdrvhost", "dwm", "sihost", "svchost", "MsMpEng", "NisSrv", "SecurityHealthService", "Sense", "MpDefenderCoreService")
+$script:CriticalProcessNames = @("Idle", "System", "Registry", "smss", "csrss", "wininit", "services", "lsass", "winlogon", "fontdrvhost", "dwm", "sihost", "svchost", "MsMpEng", "NisSrv", "SecurityHealthService", "Sense", "MpDefenderCoreService", "explorer", "powershell", "cmd")
 
 if (-not ("FileLockUtil" -as [type])) {
     Add-Type -TypeDefinition @"
@@ -154,7 +154,7 @@ public static class FileLockUtil
                 throw new InvalidOperationException("RmGetList failed with error " + result);
             }
 
-            return Array.Empty<int>();
+            return new int[0];
         }
         finally
         {
@@ -375,8 +375,10 @@ function New-HostsTweak {
 
 function New-FirewallTweak {
     param([Parameter(Mandatory = $true)][string]$RemoteAddress)
+    $ruleId = "ImFuckingParanoid_FW_$((Convert-ToTweakIdFragment -Value $RemoteAddress))"
 
     New-Tweak -Id ("fw_{0}" -f (Convert-ToTweakIdFragment -Value $RemoteAddress)) -Category "Firewall Blocking" -Type "Firewall" -Name ("Block {0}" -f $RemoteAddress) -Description "Blocks a known telemetry IP at the firewall." -Express $false -Data @{
+        RuleId = $ruleId
         RuleName = "$script:FirewallTag-$RemoteAddress"
         RemoteAddress = $RemoteAddress
     }
@@ -905,7 +907,7 @@ function Test-Tweak {
         }
         "Firewall" {
             try {
-                $rule = Get-NetFirewallRule -DisplayName $Tweak.RuleName -ErrorAction SilentlyContinue
+                $rule = Get-NetFirewallRule -Name $Tweak.RuleId -ErrorAction SilentlyContinue
                 $applied = $null -ne $rule
                 $state = if ($applied) { "Applied" } else { "Pending" }
                 $summary = if ($applied) { "Firewall rule present." } else { "Firewall rule missing." }
@@ -1141,12 +1143,16 @@ function Stop-LockingProcessesForFile {
                 continue
             }
 
-            Log -Message ("Stopping process locking hosts file: {0} ({1})" -f $process.ProcessName, $process.Id) -Level "WARNING" -Color "Yellow"
-            Stop-Process -Id $process.Id -Force -ErrorAction Stop
-            Start-Sleep -Milliseconds 300
-            $stoppedAny = $true
+            Log -Message ("Process locking hosts file found: {0} ({1})" -f $process.ProcessName, $process.Id) -Level "WARNING" -Color "Yellow"
+            if (Read-YesNo -Prompt ("Terminate locking process {0} (PID: {1}) to update hosts file?" -f $process.ProcessName, $process.Id) -DefaultYes $false) {
+                Stop-Process -Id $process.Id -Force -ErrorAction Stop
+                Start-Sleep -Milliseconds 300
+                $stoppedAny = $true
+            } else {
+                Log -Message ("User declined to stop locking process {0} ({1})." -f $process.ProcessName, $process.Id) -Level "INFO" -Color "DarkGray"
+            }
         } catch {
-            Log -Message ("Could not stop locking process {0}: {1}" -f $processId, $_.Exception.Message) -Level "ERROR" -Color "Red"
+            Log -Message ("Could not inspect or stop locking process {0}: {1}" -f $processId, $_.Exception.Message) -Level "ERROR" -Color "Red"
         }
     }
 
@@ -1177,7 +1183,7 @@ function Invoke-WithHostsFileAccess {
 
             $stoppedAny = Stop-LockingProcessesForFile -Path $script:HostsPath
             if (-not $stoppedAny) {
-                Log-Debug ("No stoppable process was found for {0}. Waiting before retry." -f $OperationName)
+                Log-Debug ("No process was terminated for {0}. Waiting before retry." -f $OperationName)
             }
             Start-Sleep -Milliseconds ([Math]::Min(2500, 300 * $attempt))
         }
@@ -1265,14 +1271,20 @@ function Apply-Tweak {
             $line = "{0}`t{1}" -f $Tweak.Address, $Tweak.Domain
             Log-Debug ("Applying hosts tweak: {0}" -f $Tweak.Domain)
             Invoke-WithHostsFileAccess -OperationName ("Append hosts entry for {0}" -f $Tweak.Domain) -Operation {
-                [System.IO.File]::AppendAllText($script:HostsPath, ($line + [System.Environment]::NewLine))
+                $content = [System.IO.File]::ReadAllText($script:HostsPath)
+                $escaped = [regex]::Escape($Tweak.Domain)
+                $pattern = "(?im)^\s*(0\.0\.0\.0|127\.0\.0\.1)\s+{0}(\s+.*)?$" -f $escaped
+                if ($content -notmatch $pattern) {
+                    $prefix = if ($content.Length -gt 0 -and -not $content.EndsWith([System.Environment]::NewLine)) { [System.Environment]::NewLine } else { "" }
+                    [System.IO.File]::AppendAllText($script:HostsPath, ($prefix + $line + [System.Environment]::NewLine))
+                }
             }
             return
         }
         "Firewall" {
-            Log-Debug ("Applying firewall tweak: {0} -> {1}" -f $Tweak.RuleName, $Tweak.RemoteAddress)
-            if (-not (Get-NetFirewallRule -DisplayName $Tweak.RuleName -ErrorAction SilentlyContinue)) {
-                New-NetFirewallRule -DisplayName $Tweak.RuleName -Direction Outbound -Action Block -RemoteAddress $Tweak.RemoteAddress -ErrorAction Stop | Out-Null
+            Log-Debug ("Applying firewall tweak: {0} -> {1}" -f $Tweak.RuleId, $Tweak.RemoteAddress)
+            if (-not (Get-NetFirewallRule -Name $Tweak.RuleId -ErrorAction SilentlyContinue)) {
+                New-NetFirewallRule -Name $Tweak.RuleId -DisplayName $Tweak.RuleName -Direction Outbound -Action Block -RemoteAddress $Tweak.RemoteAddress -ErrorAction Stop | Out-Null
             }
             return
         }

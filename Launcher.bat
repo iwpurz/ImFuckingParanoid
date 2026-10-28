@@ -4,7 +4,7 @@ title ImFuckingParanoid Launcher
 color 0B
 
 set "APP_NAME=ImFuckingParanoid"
-set "UPDATE_RELEASES_URL=https://github.com/veltrixtheperson013/ImFuckingParanoid/releases"
+set "UPDATE_RELEASES_URL=https://github.com/iwpurz/ImFuckingParanoid/releases"
 set "SCRIPT_DIR=%~dp0"
 set "PS_SCRIPT=%SCRIPT_DIR%actualscript.ps1"
 set "LOGS_DIR="

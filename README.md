@@ -1,11 +1,8 @@
-# ImFuckingParanoid
-
-> [!CAUTION]
-> This project is no longer maintained. 
+# ImFuckingParanoid (MAINTAINED FORK)
 
 ImFuckingParanoid is a production-ready Windows telemetry reduction tool for users who want tighter control over outbound diagnostics, telemetry services, scheduled tasks, and known telemetry endpoints.
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 
 ---
 
@@ -48,6 +45,12 @@ The script applies selected Windows privacy and telemetry reduction changes, the
 - Caches service state during scans instead of querying each service one by one
 - Caches scheduled task state during scans instead of querying each task one by one
 - Refreshes only the service or task that was changed during apply verification
+
+### Safety & Stability Hardening
+
+- **Interactive File Unlocking:** Prompts the user before attempting to terminate processes locking the `hosts` file.
+- **Unique Firewall IDs:** Uses unique identifiers (`RuleId`) to prevent ambiguous matching errors during firewall configuration.
+- **Legacy .NET Compatibility:** Updated helper functions to remain fully compatible with standard PowerShell 5.1 and legacy .NET Framework environments.
 
 ---
 
@@ -138,7 +141,7 @@ These are for building a setup EXE with Inno Setup. They are not needed to run t
 
 The launcher uses this default release source:
 
-`https://github.com/veltrixtheperson013/ImFuckingParanoid/releases`
+`https://github.com/iwpurz/ImFuckingParanoid/releases`
 
 Release tags should use comparable versions, such as:
 
@@ -147,6 +150,27 @@ Release tags should use comparable versions, such as:
 - `v2.0.0`
 
 Non-version tags are ignored for update purposes unless the release name contains a comparable version.
+
+---
+
+## Troubleshooting & Windows Update
+
+If you experience issues with Windows Update or Microsoft Store connectivity after applying tweaks:
+
+1. **Re-enable Core Diagnostic Services:**
+   ```powershell
+   Set-Service -Name DiagTrack -StartupType Automatic
+   Start-Service -Name DiagTrack
+   Set-Service -Name WerSvc -StartupType Manual
+   Start-Service -Name WerSvc
+   ```
+2. **Restore Hosts Backup:**
+   Locate the generated backup file in your system root (`C:\hosts_backup_YYYYMMDD_HHMMSS.bak`) and restore it to `C:\Windows\System32\drivers\etc\hosts`.
+3. **Run System Repair:**
+   ```powershell
+   DISM /Online /Cleanup-Image /RestoreHealth
+   sfc /scannow
+   ```
 
 ---
 
